@@ -128,31 +128,41 @@ app.get('/webhook', (req, res) => {
 
 // ── Incoming messages (POST) ─────────────────────────────────────────────────
 app.post('/webhook', async (req, res) => {
+  // Always return 200 immediately so Meta never pauses webhook delivery
+  res.sendStatus(200);
+
   try {
     const body = req.body;
 
-    if (body.object !== 'whatsapp_business_account') return res.sendStatus(404);
+    if (body.object !== 'whatsapp_business_account') return;
 
     const entry = body.entry?.[0];
     const change = entry?.changes?.[0];
     const message = change?.value?.messages?.[0];
 
-    if (!message || message.type !== 'text') return res.sendStatus(200);
+    if (!message || message.type !== 'text') return;
 
     const from = message.from;
     const text = message.text.body;
 
     console.log(`📩 Message from ${from}: ${text}`);
 
-    // Generate and send AI reply
-    const reply = await generateReply(from, text);
-    await sendWhatsAppMessage(from, reply);
-
-    console.log(`📤 Replied to ${from}: ${reply}`);
-    res.sendStatus(200);
+    try {
+      // Generate and send AI reply
+      const reply = await generateReply(from, text);
+      await sendWhatsAppMessage(from, reply);
+      console.log(`📤 Replied to ${from}: ${reply}`);
+    } catch (aiErr) {
+      console.error('❌ AI/Send error:', aiErr.message);
+      // Send fallback message so customer always gets a response
+      try {
+        await sendWhatsAppMessage(from, '☕ Hey! Our bot is taking a quick break. Please call us or visit The Brew Lab directly. We\'ll be back shortly!');
+      } catch (fallbackErr) {
+        console.error('❌ Fallback message failed:', fallbackErr.message);
+      }
+    }
   } catch (err) {
-    console.error('❌ Error handling message:', err.message);
-    res.sendStatus(500);
+    console.error('❌ Webhook processing error:', err.message);
   }
 });
 
@@ -161,28 +171,10 @@ app.get('/', (req, res) => {
   res.send('☕ CaféBot is running!');
 });
 
-// ── Subscribe app to WhatsApp Business Account on startup ────────────────────
-async function subscribeToWABA() {
-  try {
-    const wabaId = '1284197520537030';
-    const url = `https://graph.facebook.com/v19.0/${wabaId}/subscribed_apps`;
-    const res = await axios.post(url, {}, {
-      headers: {
-        Authorization: `Bearer ${process.env.WHATSAPP_ACCESS_TOKEN}`,
-        'Content-Type': 'application/json'
-      }
-    });
-    console.log('✅ Subscribed to WABA webhook events:', JSON.stringify(res.data));
-  } catch (err) {
-    console.error('⚠️ WABA subscription error:', err.response?.data || err.message);
-  }
-}
-
 // ── Start server ─────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, async () => {
+app.listen(PORT, () => {
   console.log(`☕ CaféBot server running on port ${PORT}`);
-  await subscribeToWABA();
 });
 
 // ── Keep-alive ping (prevents Render free tier from sleeping) ─────────────────
