@@ -166,3 +166,14 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`☕ CaféBot server running on port ${PORT}`);
 });
+
+// ── Keep-alive ping (prevents Render free tier from sleeping) ─────────────────
+const RENDER_URL = 'https://cafebot-qq2b.onrender.com';
+setInterval(async () => {
+  try {
+    await axios.get(RENDER_URL);
+    console.log('🔄 Keep-alive ping sent');
+  } catch (err) {
+    console.error('⚠️ Keep-alive ping failed:', err.message);
+  }
+}, 10 * 60 * 1000); // every 10 minutes
