@@ -161,10 +161,28 @@ app.get('/', (req, res) => {
   res.send('☕ CaféBot is running!');
 });
 
+// ── Subscribe app to WhatsApp Business Account on startup ────────────────────
+async function subscribeToWABA() {
+  try {
+    const wabaId = '1317374887198347';
+    const url = `https://graph.facebook.com/v19.0/${wabaId}/subscribed_apps`;
+    const res = await axios.post(url, {}, {
+      headers: {
+        Authorization: `Bearer ${process.env.WHATSAPP_ACCESS_TOKEN}`,
+        'Content-Type': 'application/json'
+      }
+    });
+    console.log('✅ Subscribed to WABA webhook events:', JSON.stringify(res.data));
+  } catch (err) {
+    console.error('⚠️ WABA subscription error:', err.response?.data || err.message);
+  }
+}
+
 // ── Start server ─────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`☕ CaféBot server running on port ${PORT}`);
+  await subscribeToWABA();
 });
 
 // ── Keep-alive ping (prevents Render free tier from sleeping) ─────────────────
