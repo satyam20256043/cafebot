@@ -164,7 +164,7 @@ app.get('/', (req, res) => {
 // ── Subscribe app to WhatsApp Business Account on startup ────────────────────
 async function subscribeToWABA() {
   try {
-    const wabaId = '1317374887198347';
+    const wabaId = '1284197520537030';
     const url = `https://graph.facebook.com/v19.0/${wabaId}/subscribed_apps`;
     const res = await axios.post(url, {}, {
       headers: {
