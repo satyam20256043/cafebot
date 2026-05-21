@@ -148,13 +148,11 @@ app.post('/webhook', async (req, res) => {
     console.log(`📩 Message from ${from}: ${text}`);
 
     try {
-      // Generate and send AI reply
       const reply = await generateReply(from, text);
       await sendWhatsAppMessage(from, reply);
       console.log(`📤 Replied to ${from}: ${reply}`);
     } catch (aiErr) {
       console.error('❌ AI/Send error:', aiErr.message);
-      // Send fallback message so customer always gets a response
       try {
         await sendWhatsAppMessage(from, '☕ Hey! Our bot is taking a quick break. Please call us or visit The Brew Lab directly. We\'ll be back shortly!');
       } catch (fallbackErr) {
@@ -171,10 +169,112 @@ app.get('/', (req, res) => {
   res.send('☕ CaféBot is running!');
 });
 
+// ── Diagnostic endpoint (pass ?secret=cafebot_secret_42 to use) ──────────────
+app.get('/diagnose', async (req, res) => {
+  if (req.query.secret !== process.env.WHATSAPP_VERIFY_TOKEN) {
+    return res.status(403).json({ error: 'forbidden' });
+  }
+
+  const report = {
+    timestamp: new Date().toISOString(),
+    env: {
+      ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY ? '✅ set (' + process.env.ANTHROPIC_API_KEY.slice(0, 20) + '...)' : '❌ missing',
+      WHATSAPP_ACCESS_TOKEN: process.env.WHATSAPP_ACCESS_TOKEN ? '✅ set (' + process.env.WHATSAPP_ACCESS_TOKEN.slice(0, 20) + '...)' : '❌ missing',
+      WHATSAPP_PHONE_NUMBER_ID: process.env.WHATSAPP_PHONE_NUMBER_ID || '❌ missing',
+      WHATSAPP_VERIFY_TOKEN: process.env.WHATSAPP_VERIFY_TOKEN ? '✅ set' : '❌ missing',
+    },
+    checks: {}
+  };
+
+  // 1. Test Anthropic API
+  try {
+    const r = await anthropic.messages.create({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 10,
+      messages: [{ role: 'user', content: 'ping' }]
+    });
+    report.checks.anthropic = '✅ Working — response: ' + r.content[0].text;
+  } catch (e) {
+    report.checks.anthropic = '❌ FAILED: ' + e.message;
+  }
+
+  // 2. Test WhatsApp token — check phone number details
+  try {
+    const r = await axios.get(
+      `https://graph.facebook.com/v19.0/${process.env.WHATSAPP_PHONE_NUMBER_ID}`,
+      { headers: { Authorization: `Bearer ${process.env.WHATSAPP_ACCESS_TOKEN}` } }
+    );
+    report.checks.whatsapp_token = '✅ Valid — phone: ' + (r.data.display_phone_number || r.data.id);
+  } catch (e) {
+    report.checks.whatsapp_token = '❌ FAILED: ' + (e.response?.data?.error?.message || e.message);
+  }
+
+  // 3. Check WABA webhook subscriptions
+  try {
+    const wabaId = '1284197520537030';
+    const r = await axios.get(
+      `https://graph.facebook.com/v19.0/${wabaId}/subscribed_apps`,
+      { headers: { Authorization: `Bearer ${process.env.WHATSAPP_ACCESS_TOKEN}` } }
+    );
+    report.checks.waba_subscription = r.data.data?.length > 0
+      ? '✅ Subscribed: ' + JSON.stringify(r.data.data)
+      : '❌ NOT subscribed — no apps found';
+    report.checks.waba_subscription_raw = r.data;
+  } catch (e) {
+    report.checks.waba_subscription = '❌ FAILED: ' + (e.response?.data?.error?.message || e.message);
+  }
+
+  // 4. Subscribe WABA if not subscribed
+  try {
+    const wabaId = '1284197520537030';
+    const r = await axios.post(
+      `https://graph.facebook.com/v19.0/${wabaId}/subscribed_apps`,
+      {},
+      { headers: { Authorization: `Bearer ${process.env.WHATSAPP_ACCESS_TOKEN}` } }
+    );
+    report.checks.waba_subscribe_attempt = '✅ Subscribe POST result: ' + JSON.stringify(r.data);
+  } catch (e) {
+    report.checks.waba_subscribe_attempt = '❌ Subscribe POST failed: ' + (e.response?.data?.error?.message || e.message);
+  }
+
+  res.json(report);
+});
+
+// ── Test webhook simulate endpoint ───────────────────────────────────────────
+app.post('/test-message', async (req, res) => {
+  if (req.query.secret !== process.env.WHATSAPP_VERIFY_TOKEN) {
+    return res.status(403).json({ error: 'forbidden' });
+  }
+  const { phone, message } = req.body;
+  if (!phone || !message) return res.status(400).json({ error: 'phone and message required' });
+
+  try {
+    const reply = await generateReply(phone, message);
+    await sendWhatsAppMessage(phone, reply);
+    res.json({ success: true, reply });
+  } catch (e) {
+    res.json({ success: false, error: e.message });
+  }
+});
+
 // ── Start server ─────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`☕ CaféBot server running on port ${PORT}`);
+  // Auto-subscribe WABA to this app's webhooks on startup
+  const token = process.env.WHATSAPP_ACCESS_TOKEN;
+  const wabaId = '1284197520537030';
+  if (token) {
+    axios.post(
+      `https://graph.facebook.com/v19.0/${wabaId}/subscribed_apps`,
+      {},
+      { headers: { Authorization: `Bearer ${token}` } }
+    ).then(r => {
+      console.log('✅ WABA webhook subscription confirmed:', JSON.stringify(r.data));
+    }).catch(e => {
+      console.error('⚠️ WABA subscription warning:', e.response?.data?.error?.message || e.message);
+    });
+  }
 });
 
 // ── Keep-alive ping (prevents Render free tier from sleeping) ─────────────────
