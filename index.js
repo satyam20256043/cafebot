@@ -209,33 +209,8 @@ app.get('/diagnose', async (req, res) => {
     report.checks.whatsapp_token = '❌ FAILED: ' + (e.response?.data?.error?.message || e.message);
   }
 
-  // 3. Check WABA webhook subscriptions
-  try {
-    const wabaId = '1284197520537030';
-    const r = await axios.get(
-      `https://graph.facebook.com/v19.0/${wabaId}/subscribed_apps`,
-      { headers: { Authorization: `Bearer ${process.env.WHATSAPP_ACCESS_TOKEN}` } }
-    );
-    report.checks.waba_subscription = r.data.data?.length > 0
-      ? '✅ Subscribed: ' + JSON.stringify(r.data.data)
-      : '❌ NOT subscribed — no apps found';
-    report.checks.waba_subscription_raw = r.data;
-  } catch (e) {
-    report.checks.waba_subscription = '❌ FAILED: ' + (e.response?.data?.error?.message || e.message);
-  }
-
-  // 4. Subscribe WABA if not subscribed
-  try {
-    const wabaId = '1284197520537030';
-    const r = await axios.post(
-      `https://graph.facebook.com/v19.0/${wabaId}/subscribed_apps`,
-      {},
-      { headers: { Authorization: `Bearer ${process.env.WHATSAPP_ACCESS_TOKEN}` } }
-    );
-    report.checks.waba_subscribe_attempt = '✅ Subscribe POST result: ' + JSON.stringify(r.data);
-  } catch (e) {
-    report.checks.waba_subscribe_attempt = '❌ Subscribe POST failed: ' + (e.response?.data?.error?.message || e.message);
-  }
+  // 3. Webhook subscription note
+  report.checks.waba_subscription = 'ℹ️ Managed via Meta App Dashboard — not checked via API (requires System User token)';
 
   res.json(report);
 });
@@ -261,20 +236,7 @@ app.post('/test-message', async (req, res) => {
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`☕ CaféBot server running on port ${PORT}`);
-  // Auto-subscribe WABA to this app's webhooks on startup
-  const token = process.env.WHATSAPP_ACCESS_TOKEN;
-  const wabaId = '1284197520537030';
-  if (token) {
-    axios.post(
-      `https://graph.facebook.com/v19.0/${wabaId}/subscribed_apps`,
-      {},
-      { headers: { Authorization: `Bearer ${token}` } }
-    ).then(r => {
-      console.log('✅ WABA webhook subscription confirmed:', JSON.stringify(r.data));
-    }).catch(e => {
-      console.error('⚠️ WABA subscription warning:', e.response?.data?.error?.message || e.message);
-    });
-  }
+  console.log('ℹ️  Webhook subscription is managed via Meta App Dashboard.');
 });
 
 // ── Keep-alive ping (prevents Render free tier from sleeping) ─────────────────
