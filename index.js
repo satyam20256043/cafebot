@@ -1,7 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
-const Anthropic = require('@anthropic-ai/sdk');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 const app = express();
 app.use(express.json());
@@ -13,7 +13,11 @@ app.use((req, res, next) => {
   next();
 });
 
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const geminiModel = genAI.getGenerativeModel({
+  model: 'gemini-1.5-flash',
+  systemInstruction: '', // filled per-request from CAFE_SYSTEM_PROMPT
+});
 
 // ── Café context for Claude ──────────────────────────────────────────────────
 const CAFE_SYSTEM_PROMPT = `You are CaféBot, the friendly AI assistant for The Brew Lab café.
@@ -70,19 +74,22 @@ RULES:
 - For payments/billing questions, direct them to the counter staff
 - Always end table booking confirmations with: "See you at The Brew Lab! ☕"`;
 
-// ── In-memory conversation store ─────────────────────────────────────────────
-const conversations = {};
+// ── In-memory chat sessions (one per phone number) ───────────────────────────
+// Gemini's startChat() keeps conversation history automatically.
+const chatSessions = {};
 
-function getHistory(phoneNumber) {
-  if (!conversations[phoneNumber]) conversations[phoneNumber] = [];
-  return conversations[phoneNumber];
-}
-
-function addToHistory(phoneNumber, role, content) {
-  const history = getHistory(phoneNumber);
-  history.push({ role, content });
-  // Keep last 20 messages to avoid token overflow
-  if (history.length > 20) history.splice(0, history.length - 20);
+function getOrCreateChat(phoneNumber) {
+  if (!chatSessions[phoneNumber]) {
+    const model = genAI.getGenerativeModel({
+      model: 'gemini-1.5-flash',
+      systemInstruction: CAFE_SYSTEM_PROMPT,
+    });
+    chatSessions[phoneNumber] = model.startChat({
+      history: [],
+      generationConfig: { maxOutputTokens: 512 },
+    });
+  }
+  return chatSessions[phoneNumber];
 }
 
 // ── Send WhatsApp message ────────────────────────────────────────────────────
@@ -103,19 +110,9 @@ async function sendWhatsAppMessage(to, text) {
 
 // ── Generate AI reply ────────────────────────────────────────────────────────
 async function generateReply(phoneNumber, userMessage) {
-  addToHistory(phoneNumber, 'user', userMessage);
-  const history = getHistory(phoneNumber);
-
-  const response = await anthropic.messages.create({
-    model: 'claude-haiku-4-5-20251001',
-    max_tokens: 500,
-    system: CAFE_SYSTEM_PROMPT,
-    messages: history
-  });
-
-  const reply = response.content[0].text;
-  addToHistory(phoneNumber, 'assistant', reply);
-  return reply;
+  const chat = getOrCreateChat(phoneNumber);
+  const result = await chat.sendMessage(userMessage);
+  return result.response.text();
 }
 
 // ── Webhook verification (GET) ───────────────────────────────────────────────
@@ -185,7 +182,7 @@ app.get('/diagnose', async (req, res) => {
   const report = {
     timestamp: new Date().toISOString(),
     env: {
-      ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY ? '✅ set (' + process.env.ANTHROPIC_API_KEY.slice(0, 20) + '...)' : '❌ missing',
+      GEMINI_API_KEY: process.env.GEMINI_API_KEY ? '✅ set (' + process.env.GEMINI_API_KEY.slice(0, 10) + '...)' : '❌ missing',
       WHATSAPP_ACCESS_TOKEN: process.env.WHATSAPP_ACCESS_TOKEN ? '✅ set (' + process.env.WHATSAPP_ACCESS_TOKEN.slice(0, 20) + '...)' : '❌ missing',
       WHATSAPP_PHONE_NUMBER_ID: process.env.WHATSAPP_PHONE_NUMBER_ID || '❌ missing',
       WHATSAPP_VERIFY_TOKEN: process.env.WHATSAPP_VERIFY_TOKEN ? '✅ set' : '❌ missing',
@@ -193,16 +190,13 @@ app.get('/diagnose', async (req, res) => {
     checks: {}
   };
 
-  // 1. Test Anthropic API
+  // 1. Test Gemini API
   try {
-    const r = await anthropic.messages.create({
-      model: 'claude-haiku-4-5-20251001',
-      max_tokens: 10,
-      messages: [{ role: 'user', content: 'ping' }]
-    });
-    report.checks.anthropic = '✅ Working — response: ' + r.content[0].text;
+    const testModel = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+    const r = await testModel.generateContent('ping');
+    report.checks.gemini = '✅ Working — response: ' + r.response.text().slice(0, 60);
   } catch (e) {
-    report.checks.anthropic = '❌ FAILED: ' + e.message;
+    report.checks.gemini = '❌ FAILED: ' + e.message;
   }
 
   // 2. Test WhatsApp token — check phone number details
