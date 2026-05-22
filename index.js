@@ -15,7 +15,7 @@ app.use((req, res, next) => {
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const geminiModel = genAI.getGenerativeModel({
-  model: 'gemini-1.5-flash',
+  model: 'gemini-2.0-flash',
   systemInstruction: '', // filled per-request from CAFE_SYSTEM_PROMPT
 });
 
@@ -81,7 +81,7 @@ const chatSessions = {};
 function getOrCreateChat(phoneNumber) {
   if (!chatSessions[phoneNumber]) {
     const model = genAI.getGenerativeModel({
-      model: 'gemini-1.5-flash',
+      model: 'gemini-2.0-flash',
       systemInstruction: CAFE_SYSTEM_PROMPT,
     });
     chatSessions[phoneNumber] = model.startChat({
@@ -192,7 +192,7 @@ app.get('/diagnose', async (req, res) => {
 
   // 1. Test Gemini API
   try {
-    const testModel = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+    const testModel = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
     const r = await testModel.generateContent('ping');
     report.checks.gemini = '✅ Working — response: ' + r.response.text().slice(0, 60);
   } catch (e) {
